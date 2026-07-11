@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Temp Card Tracker</title>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Arial, Helvetica, sans-serif; background:#f8f9fa; color:#212529; }
+  button { font-family: inherit; }
+  input, select { font-family: inherit; }
+  table { border-collapse: collapse; }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex;
+              align-items:flex-start; justify-content:center; padding:60px 16px; z-index:50; overflow:auto; }
+  .modal { background:#fff; border-radius:10px; padding:24px; width:100%; max-width:460px; }
+  .fld { display:block; width:100%; padding:9px 11px; fontSize:14px; border:1px solid #dee2e6;
+         border-radius:6px; margin-top:4px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+const API = '';   // same origin (Express serves this file)
+
+// ─── palette ───────────────────────────────────
+const C = {
+  blue:'#0d6efd', green:'#198754', red:'#dc3545', orange:'#fd7e14',
+  purple:'#6f42c1', gray:'#6c757d', bgLight:'#f8f9fa', white:'#ffffff',
+  border:'#dee2e6', dark:'#212529',
+};
+
+// ─── api helper ────────────────────────────────
+async function api(method, url, body) {
+  const r = await fetch(API + url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const d = await r.json();
+  if (!d.success) throw new Error(d.error || 'Request failed');
+  return d;
+}
+
+function fmtDateTime(s) {
+  if (!s) return '⚠️ Missing date';
+  const d = new Date(s.replace(' ', 'T'));
+  return isNaN(d) ? s : d.toLocaleString();
+}
+
+// ─── tiny UI atoms ─────────────────────────────
+function Tag({ color, children }) {
+  return <span style={{ background:color+'22', color, border:`1px solid ${color}55`,
+    borderRadius:4, padding:'2px 8px', fontSize:11, fontWeight:700, whiteSpace:'nowrap' }}>{children}</span>;
+}
+function Stat({ label, value, color=C.dark, sub }) {
+  const v = value===undefined||value===null||value==='' ? 0 : value;
+  return <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:8,
+    padding:'16px 20px', flex:1, minWidth:120 }}>
+    <div style={{ fontSize:28, fontWeight:800, color }}>{v}</div>
+    <div style={{ fontSize:12, fontWeight:600, color:C.gray, marginTop:2 }}>{label}</div>
+    {sub && <div style={{ fontSize:11, color:C.gray, marginTop:2 }}>{sub}</div>}
+  </div>;
+}
+function Btn({ children, color=C.blue, sm, disabled, style={}, ...p }) {
+  return <button {...p} disabled={disabled} style={{
+    background: disabled ? '#adb5bd' : color, color:'#fff', border:'none', borderRadius:5,
+    padding: sm ? '6px 12px' : '9px 16px', fontSize: sm ? 12 : 14, fontWeight:700,
+    cursor: disabled ? 'not-allowed' : 'pointer', whiteSpace:'nowrap', ...style }}>{children}</button>;
+}
+function Banner({ type='info', msg, onClose }) {
+  const col = type==='error' ? C.red : type==='success' ? C.green : C.blue;
+  return <div style={{ background:col+'18', border:`1px solid ${col}55`, color:col,
+    borderRadius:8, padding:'10px 14px', margin:'0 0 14px', display:'flex',
+    justifyContent:'space-between', gap:10, fontSize:13, fontWeight:600 }}>
+    <span>{msg}</span>
+    {onClose && <span style={{ cursor:'pointer' }} onClick={onClose}>✕</span>}
+  </div>;
+}
+function Modal({ title, children, onClose }) {
+  return <div className="modal-bg" onClick={onClose}>
+    <div className="modal" onClick={e=>e.stopPropagation()}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+        <h3 style={{ margin:0, fontSize:18 }}>{title}</h3>
+        <span style={{ cursor:'pointer', color:C.gray, fontSize:20 }} onClick={onClose}>✕</span>
+      </div>
+      {children}
+    </div>
+  </div>;
+}
+function Field({ label, children }) {
+  return <label style={{ display:'block', marginBottom:12, fontSize:13, fontWeight:600 }}>
+    {label}{children}</label>;
+}
+
+// ═══ DASHBOARD ═════════════════════════════════
+function Dashboard({ conferences, onNavigate }) {
+  const [data, setData] = useState(null);
+  const [alert, setAlert] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setData((await api('GET','/api/dashboard'))); } catch(e){ setAlert({type:'error',msg:e.message}); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (!data) return <div style={{ color:C.gray, padding:40, textAlign:'center' }}>Loading…</div>;
+  const t = data.totals;
+
+  return <div>
+    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:10 }}>
+      <h2 style={{ margin:0, fontSize:22, fontWeight:700 }}>Dashboard</h2>
+      <Btn color={C.purple} disabled={syncing}
+        onClick={()=>{ setSyncing(true); setAlert({type:'info',msg:'Roster sync from Google Sheets / Excel is the next phase — the prototype uses seeded data for now.'}); setTimeout(()=>setSyncing(false),400); }}>
+        Sync Google/Excel Roster
+      </Btn>
+    </div>
+    {alert && <Banner {...alert} onClose={()=>setAlert(null)} />}
+
+    <div style={{ display:'flex', gap:12, flexWrap:'wrap', marginBottom:20 }}>
+      <Stat label="Total Guests" value={t.total_guests} />
+      <Stat label="Total Cards" value={t.total_cards} />
+      <Stat label="Cards Out Now" value={t.cards_out} color={C.orange} />
+      <Stat label="At Desk (Inventory)" value={t.cards_at_desk} color={C.green} />
+      <Stat label="⚠️ At 3-Card Max" value={t.guests_at_max} color={t.guests_at_max?C.red:C.gray} />
+      <Stat label="Missing Cards" value={t.cards_missing} color={t.cards_missing?C.red:C.gray} />
+    </div>
+
+    <h3 style={{ fontSize:16, fontWeight:700, marginBottom:10 }}>By Group</h3>
+    <div style={{ display:'grid', gap:10 }}>
+      {data.byGroup.map(g => {
+        const pct = g.total_cards ? Math.round((g.cards_at_desk / g.total_cards) * 100) : 0;
+        return <div key={g.id} style={{ background:C.white, border:`1px solid ${C.border}`,
+          borderRadius:8, padding:'16px 18px', display:'flex', alignItems:'center', gap:16, flexWrap:'wrap' }}>
+          <div style={{ flex:1, minWidth:200 }}>
+            <div style={{ fontWeight:700, fontSize:15 }}>{g.name}</div>
+            <div style={{ fontSize:12, color:C.gray, margin:'2px 0 8px' }}>{g.guests} guests</div>
+            <div style={{ height:6, background:C.bgLight, borderRadius:4, overflow:'hidden' }}>
+              <div style={{ width:pct+'%', height:'100%', background: g.cards_missing?C.orange:C.green }} />
+            </div>
+            <div style={{ fontSize:11, color:C.gray, marginTop:4 }}>
+              {g.cards_missing ? `${g.cards_missing} missing` : 'Inventory OK'}
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+            <Tag color={C.gray}>{g.total_cards} total</Tag>
+            <Tag color={g.cards_out?C.orange:C.gray}>{g.cards_out} out</Tag>
+            <Tag color={C.green}>{g.cards_at_desk} left</Tag>
+            <Btn sm onClick={()=>onNavigate('tracker', g.id)}>Issue/Return</Btn>
+            <Btn sm color={C.purple} onClick={()=>onNavigate('inventory', g.id)}>Inventory</Btn>
+          </div>
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+// ═══ CARDS OUT ═════════════════════════════════
+function CardsOut({ conferences }) {
+  const [rows, setRows] = useState([]);
+  const [confId, setConfId] = useState('');
+  const load = useCallback(async () => {
+    const url = '/api/cards-out' + (confId ? `?conf_id=${confId}` : '');
+    try { setRows((await api('GET', url)).data); } catch {}
+  }, [confId]);
+  useEffect(() => { load(); }, [load]);
+
+  const missingStaff = rows.filter(r => !r.issued_by || r.issued_by==='MISSING STAFF').length;
+
+  return <div>
+    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:10 }}>
+      <h2 style={{ margin:0, fontSize:22, fontWeight:700 }}>Cards Currently Out <span style={{ color:C.orange }}>({rows.length})</span></h2>
+      <select className="fld" style={{ width:200 }} value={confId} onChange={e=>setConfId(e.target.value)}>
+        <option value="">All Groups</option>
+        {conferences.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+    </div>
+    {missingStaff>0 && <Banner type="info" msg={`${missingStaff} card(s) are missing the staff name from the imported sheet.`} />}
+    {rows.length===0 ? <Empty text="No cards are currently out." /> :
+      <Table head={['Card #','Guest','Room','Guest Group','Card Owner','Issued By','Issued At']}
+        rows={rows.map(r => {
+          const noStaff = !r.issued_by || r.issued_by==='MISSING STAFF';
+          const noDate = !r.issued_at;
+          return { key:r.card_number+r.guest_name, hl: noStaff||noDate, cells:[
+            <b style={{ color:C.orange }}>{r.card_number}</b>,
+            <b>{r.guest_name}</b>,
+            <span style={{ color:C.gray }}>{r.building?`${r.building} · ${r.room_number||''}`:r.room_number||'—'}</span>,
+            r.conference_name,
+            r.card_owner_conference_name,
+            noStaff ? <span style={{ color:C.orange, fontWeight:700 }}>⚠️ Missing staff</span> : r.issued_by,
+            noDate ? <span style={{ color:C.orange, fontWeight:700 }}>⚠️ Missing date</span> : fmtDateTime(r.issued_at),
+          ]};
+        })} />}
+  </div>;
+}
+
+// ═══ ISSUE / RETURN ════════════════════════════
+function Tracker({ conferences, initConfId, reloadConferences }) {
+  const [confId, setConfId] = useState(initConfId || (conferences[0]?.id ?? ''));
+  const [guests, setGuests] = useState([]);
+  const [search, setSearch] = useState('');
+  const [alert, setAlert] = useState(null);
+  const [modal, setModal] = useState(null);  // {type, guest}
+
+  useEffect(() => { if (initConfId) setConfId(initConfId); }, [initConfId]);
+
+  const load = useCallback(async () => {
+    if (!confId) return;
+    const url = `/api/conferences/${confId}/guests` + (search?`?search=${encodeURIComponent(search)}`:'');
+    try { setGuests((await api('GET', url)).data); } catch(e){ setAlert({type:'error',msg:e.message}); }
+  }, [confId, search]);
+  useEffect(() => { load(); }, [load]);
+
+  const flash = (type,msg) => { setAlert({type,msg}); };
+  const cardsOutTotal = guests.reduce((s,g)=>s+g.cards_out,0);
+  const atMax = guests.filter(g=>g.cards_out>=3).length;
+
+  return <div>
+    <h2 style={{ margin:'0 0 16px', fontSize:22, fontWeight:700 }}>Issue / Return Cards</h2>
+    {alert && <Banner {...alert} onClose={()=>setAlert(null)} />}
+
+    <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
+      <select className="fld" style={{ flex:1, minWidth:200 }} value={confId} onChange={e=>setConfId(e.target.value)}>
+        {conferences.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+      <Btn onClick={()=>setModal({type:'newGroup'})}>+ New Group</Btn>
+      <Btn color={C.green} onClick={()=>setModal({type:'addGuest'})}>+ Add Guest</Btn>
+    </div>
+
+    <input className="fld" placeholder="Search by name or room…" value={search}
+      onChange={e=>setSearch(e.target.value)} style={{ marginBottom:14 }} />
+
+    <div style={{ display:'flex', gap:12, marginBottom:16, flexWrap:'wrap' }}>
+      <Stat label="Guests" value={guests.length} />
+      <Stat label="Cards Out" value={cardsOutTotal} color={cardsOutTotal?C.orange:C.gray} />
+      <Stat label="⚠️ At Max" value={atMax} color={atMax?C.red:C.gray} />
+    </div>
+
+    <div style={{ display:'grid', gap:8 }}>
+      {guests.length===0 ? <Empty text="No guests. Add one or sync the roster." /> :
+        guests.map(g => <div key={g.id} style={{ background:C.white, border:`1px solid ${C.border}`,
+          borderRadius:8, padding:'14px 16px', display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+          <div style={{ flex:1, minWidth:160 }}>
+            <div style={{ fontWeight:700 }}>{g.first_name} {g.last_name}</div>
+            <div style={{ fontSize:12, color:C.gray }}>{g.building?`${g.building} · `:''}Room {g.room_number||'—'}</div>
+          </div>
+          <div style={{ textAlign:'center', border:`1px solid ${C.border}`, borderRadius:6, padding:'6px 12px' }}>
+            <div style={{ fontSize:11, color:C.gray, fontWeight:700 }}>CARDS OUT</div>
+            <div style={{ fontSize:20, fontWeight:800, color: g.cards_out>=3?C.red:g.cards_out?C.orange:C.dark }}>{g.cards_out}</div>
+          </div>
+          <Btn sm color={C.green} disabled={g.cards_out>=3} onClick={()=>setModal({type:'issue', guest:g})}>+ Issue</Btn>
+          <Btn sm color={C.blue} disabled={g.cards_out===0} onClick={()=>setModal({type:'return', guest:g})}>Return</Btn>
+          <Btn sm color={C.gray} onClick={async()=>{
+            if(!window.confirm(`Delete ${g.first_name} ${g.last_name}?`)) return;
+            try { await api('DELETE',`/api/guests/${g.id}`); flash('success','Guest deleted'); load(); }
+            catch(e){ flash('error', e.message); }
+          }}>Delete</Btn>
+        </div>)}
+    </div>
+
+    {modal?.type==='issue' && <IssueModal guest={modal.guest} confId={confId}
+      onClose={()=>setModal(null)} onDone={(m)=>{ flash('success',m); load(); }} onErr={m=>flash('error',m)} />}
+    {modal?.type==='return' && <ReturnModal guest={modal.guest}
+      onClose={()=>setModal(null)} onDone={(m)=>{ flash('success',m); load(); }} onErr={m=>flash('error',m)} />}
+    {modal?.type==='addGuest' && <AddGuestModal confId={confId}
+      onClose={()=>setModal(null)} onDone={()=>{ flash('success','Guest added'); load(); }} onErr={m=>flash('error',m)} />}
+    {modal?.type==='newGroup' && <NewGroupModal
+      onClose={()=>setModal(null)} onDone={async(id)=>{ await reloadConferences(); setConfId(id); flash('success','Group created'); }} onErr={m=>flash('error',m)} />}
+  </div>;
+}
+
+function StaffSelect({ value, onChange }) {
+  const [names, setNames] = useState([]);
+  useEffect(()=>{ api('GET','/api/staff-names').then(d=>setNames(d.data)).catch(()=>{}); }, []);
+  return <select className="fld" value={value} onChange={e=>onChange(e.target.value)}>
+    <option value="">Select staff…</option>
+    {names.map(n => <option key={n} value={n}>{n}</option>)}
+    <option value="MISSING STAFF">MISSING STAFF</option>
+  </select>;
+}
+
+function IssueModal({ guest, confId, onClose, onDone, onErr }) {
+  const [cards, setCards] = useState([]);
+  const [cardId, setCardId] = useState('');
+  const [staff, setStaff] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(()=>{ api('GET','/api/available-cards').then(d=>setCards(d.data)).catch(()=>{}); }, []);
+
+  const own = cards.filter(c => String(c.conference_id)===String(confId));
+  const other = cards.filter(c => String(c.conference_id)!==String(confId));
+
+  const submit = async () => {
+    if (!cardId) return onErr('Choose a card');
+    if (!staff) return onErr('Choose staff');
+    setBusy(true);
+    try { const d = await api('POST',`/api/guests/${guest.id}/issue`, { card_id:Number(cardId), staff_name:staff, reason }); onClose(); onDone(d.warning || d.message); }
+    catch(e){ onErr(e.message); setBusy(false); }
+  };
+  return <Modal title={`Issue card → ${guest.first_name} ${guest.last_name}`} onClose={onClose}>
+    <Field label="Available card">
+      <select className="fld" value={cardId} onChange={e=>setCardId(e.target.value)}>
+        <option value="">Select a card…</option>
+        {own.length>0 && <optgroup label="This group">
+          {own.map(c=><option key={c.id} value={c.id}>{c.card_number}</option>)}</optgroup>}
+        {other.length>0 && <optgroup label="Borrow from another group">
+          {other.map(c=><option key={c.id} value={c.id}>{c.card_number} — {c.conference_name}</option>)}</optgroup>}
+      </select>
+    </Field>
+    <Field label="Staff name"><StaffSelect value={staff} onChange={setStaff} /></Field>
+    <Field label="Reason (optional)"><input className="fld" value={reason} onChange={e=>setReason(e.target.value)} placeholder="e.g. Lockout" /></Field>
+    <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8 }}>
+      <Btn color={C.gray} onClick={onClose}>Cancel</Btn>
+      <Btn color={C.green} disabled={busy} onClick={submit}>Issue card</Btn>
+    </div>
+  </Modal>;
+}
+
+function ReturnModal({ guest, onClose, onDone, onErr }) {
+  const [held, setHeld] = useState([]);
+  const [cardNumber, setCardNumber] = useState('');
+  const [staff, setStaff] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(()=>{ api('GET','/api/cards-out').then(d=>setHeld(d.data.filter(r=>r.guest_name===`${guest.first_name} ${guest.last_name}`))).catch(()=>{}); }, []);
+
+  const submit = async () => {
+    if (!staff) return onErr('Choose staff');
+    setBusy(true);
+    try { const d = await api('POST',`/api/guests/${guest.id}/return`, { staff_name:staff, card_number:cardNumber||undefined }); onClose(); onDone(d.message); }
+    catch(e){ onErr(e.message); setBusy(false); }
+  };
+  return <Modal title={`Return card ← ${guest.first_name} ${guest.last_name}`} onClose={onClose}>
+    <Field label="Card to return">
+      <select className="fld" value={cardNumber} onChange={e=>setCardNumber(e.target.value)}>
+        <option value="">Most recent card</option>
+        {held.map(h=><option key={h.card_number} value={h.card_number}>{h.card_number}</option>)}
+      </select>
+    </Field>
+    <Field label="Staff name"><StaffSelect value={staff} onChange={setStaff} /></Field>
+    <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8 }}>
+      <Btn color={C.gray} onClick={onClose}>Cancel</Btn>
+      <Btn onClick={submit} disabled={busy}>Process return</Btn>
+    </div>
+  </Modal>;
+}
+
+function AddGuestModal({ confId, onClose, onDone, onErr }) {
+  const [f, setF] = useState({ first_name:'', last_name:'', building:'', room_number:'', company_or_org:'' });
+  const up = k => e => setF({ ...f, [k]:e.target.value });
+  const submit = async () => {
+    if (!f.first_name.trim()||!f.last_name.trim()) return onErr('First and last name required');
+    try { await api('POST','/api/guests', { conference_id:Number(confId), ...f }); onClose(); onDone(); }
+    catch(e){ onErr(e.message); }
+  };
+  return <Modal title="Add guest" onClose={onClose}>
+    <Field label="First name *"><input className="fld" value={f.first_name} onChange={up('first_name')} /></Field>
+    <Field label="Last name *"><input className="fld" value={f.last_name} onChange={up('last_name')} /></Field>
+    <Field label="Building"><input className="fld" value={f.building} onChange={up('building')} /></Field>
+    <Field label="Room number"><input className="fld" value={f.room_number} onChange={up('room_number')} /></Field>
+    <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8 }}>
+      <Btn color={C.gray} onClick={onClose}>Cancel</Btn>
+      <Btn color={C.green} onClick={submit}>Add guest</Btn>
+    </div>
+  </Modal>;
+}
+
+function NewGroupModal({ onClose, onDone, onErr }) {
+  const [name, setName] = useState('');
+  const submit = async () => {
+    if (!name.trim()) return onErr('Name required');
+    try { const d = await api('POST','/api/conferences', { name }); onClose(); onDone(d.id); }
+    catch(e){ onErr(e.message); }
+  };
+  return <Modal title="New group" onClose={onClose}>
+    <Field label="Group / conference name"><input className="fld" value={name} onChange={e=>setName(e.target.value)} /></Field>
+    <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8 }}>
+      <Btn color={C.gray} onClick={onClose}>Cancel</Btn>
+      <Btn onClick={submit}>Create</Btn>
+    </div>
+  </Modal>;
+}
+
+// ═══ CARD INVENTORY ════════════════════════════
+function Inventory({ conferences, initConfId }) {
+  const [confId, setConfId] = useState(initConfId || (conferences[0]?.id ?? ''));
+  const [data, setData] = useState({ data:[], summary:{} });
+  const [alert, setAlert] = useState(null);
+  const [adding, setAdding] = useState(false);
+
+  useEffect(()=>{ if (initConfId) setConfId(initConfId); }, [initConfId]);
+  const load = useCallback(async () => {
+    if (!confId) return;
+    try { setData(await api('GET',`/api/conferences/${confId}/cards`)); } catch(e){ setAlert({type:'error',msg:e.message}); }
+  }, [confId]);
+  useEffect(()=>{ load(); }, [load]);
+
+  const toggleMissing = async (c) => {
+    try { await api('PUT',`/api/cards/${c.id}`, { status: c.status==='missing'?'listed':'missing' });
+      setAlert({type:'success',msg:`Card ${c.card_number} updated`}); load(); }
+    catch(e){ setAlert({type:'error',msg:e.message}); }
+  };
+  const s = data.summary;
+
+  return <div>
+    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:10 }}>
+      <h2 style={{ margin:0, fontSize:22, fontWeight:700 }}>Card Inventory</h2>
+      <div style={{ display:'flex', gap:8 }}>
+        <select className="fld" style={{ width:190 }} value={confId} onChange={e=>setConfId(e.target.value)}>
+          {conferences.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <Btn onClick={()=>setAdding(true)}>+ Add Card</Btn>
+      </div>
+    </div>
+    {alert && <Banner {...alert} onClose={()=>setAlert(null)} />}
+    <div style={{ display:'flex', gap:12, marginBottom:16, flexWrap:'wrap' }}>
+      <Stat label="Total Cards" value={s.total} />
+      <Stat label="✅ At Desk" value={s.available} color={C.green} />
+      <Stat label="👤 With Guests" value={s.out} color={C.orange} />
+      <Stat label="❌ Missing" value={s.missing} color={s.missing?C.red:C.gray} />
+    </div>
+    <Table head={['Card #','Status','Location','With Guest','Room','Notes','Action']}
+      rows={data.data.map(c => ({ key:c.id, hl:c.status==='missing', cells:[
+        <b>{c.card_number}</b>,
+        <Tag color={c.status==='missing'?C.red:C.blue}>{c.status==='missing'?'Missing':'Listed'}</Tag>,
+        c.status==='missing' ? <Tag color={C.red}>❌ Missing</Tag>
+          : c.available ? <Tag color={C.green}>✅ At Desk</Tag> : <Tag color={C.orange}>👤 Out</Tag>,
+        c.held_by_name || '—',
+        c.held_by_room || '—',
+        <span style={{ color:C.gray, fontSize:12 }}>{c.notes || '—'}</span>,
+        <Btn sm color={c.status==='missing'?C.green:C.red} onClick={()=>toggleMissing(c)}>
+          {c.status==='missing'?'Unmark':'Missing'}</Btn>,
+      ]}))} />
+    {adding && <AddCardModal confId={confId} onClose={()=>setAdding(false)}
+      onDone={()=>{ setAlert({type:'success',msg:'Card added'}); load(); }} onErr={m=>setAlert({type:'error',msg:m})} />}
+  </div>;
+}
+
+function AddCardModal({ confId, onClose, onDone, onErr }) {
+  const [num, setNum] = useState('');
+  const [notes, setNotes] = useState('');
+  const submit = async () => {
+    if (!num.trim()) return onErr('Card number required');
+    try { await api('POST',`/api/conferences/${confId}/cards`, { card_number:num, notes }); onClose(); onDone(); }
+    catch(e){ onErr(e.message); }
+  };
+  return <Modal title="Add card to inventory" onClose={onClose}>
+    <Field label="Card number *"><input className="fld" value={num} onChange={e=>setNum(e.target.value)} /></Field>
+    <Field label="Notes"><input className="fld" value={notes} onChange={e=>setNotes(e.target.value)} /></Field>
+    <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8 }}>
+      <Btn color={C.gray} onClick={onClose}>Cancel</Btn>
+      <Btn onClick={submit}>Add card</Btn>
+    </div>
+  </Modal>;
+}
+
+// ═══ LOG ═══════════════════════════════════════
+function Log({ conferences }) {
+  const [rows, setRows] = useState([]);
+  const [confId, setConfId] = useState('');
+  const [edit, setEdit] = useState(null);
+  const [alert, setAlert] = useState(null);
+  const load = useCallback(async () => {
+    const url = '/api/log?limit=200' + (confId?`&conf_id=${confId}`:'');
+    try { setRows((await api('GET', url)).data); } catch(e){ setAlert({type:'error',msg:e.message}); }
+  }, [confId]);
+  useEffect(()=>{ load(); }, [load]);
+
+  return <div>
+    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:10 }}>
+      <h2 style={{ margin:0, fontSize:22, fontWeight:700 }}>Transaction Log</h2>
+      <select className="fld" style={{ width:190 }} value={confId} onChange={e=>setConfId(e.target.value)}>
+        <option value="">All Groups</option>
+        {conferences.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+    </div>
+    {alert && <Banner {...alert} onClose={()=>setAlert(null)} />}
+    {rows.length===0 ? <Empty text="No transactions yet." /> :
+      <Table head={['Action','Card #','Guest','Room','Group','Staff','Reason','Date & Time','Edit']}
+        rows={rows.map(r => {
+          const noStaff = !r.staff_name || r.staff_name==='MISSING STAFF';
+          return { key:r.id, hl:noStaff, cells:[
+            <Tag color={r.action==='issued'?C.orange:C.green}>{r.action==='issued'?'📤 Issued':'✅ Returned'}</Tag>,
+            <b>{r.card_number}</b>,
+            <b>{r.guest_name}</b>,
+            <span style={{ color:C.gray }}>{r.room_number||'—'}</span>,
+            <span style={{ color:C.gray }}>{r.conference_name}</span>,
+            noStaff ? <span style={{ color:C.orange, fontWeight:700 }}>⚠️ Missing staff</span> : r.staff_name,
+            <span style={{ color:C.gray, fontSize:12 }}>{r.reason||'—'}</span>,
+            <span style={{ color:r.action_time?C.gray:C.orange, fontWeight:r.action_time?400:700, fontSize:12 }}>{fmtDateTime(r.action_time)}</span>,
+            <Btn sm color={C.gray} onClick={()=>setEdit(r)}>Edit</Btn>,
+          ]};
+        })} />}
+    {edit && <EditLogModal entry={edit} onClose={()=>setEdit(null)}
+      onDone={()=>{ setAlert({type:'success',msg:'Transaction updated'}); load(); }} onErr={m=>setAlert({type:'error',msg:m})} />}
+  </div>;
+}
+
+function EditLogModal({ entry, onClose, onDone, onErr }) {
+  const [f, setF] = useState({ card_number:entry.card_number||'', staff_name:entry.staff_name||'', reason:entry.reason||'' });
+  const up = k => e => setF({ ...f, [k]:e.target.value });
+  const submit = async () => {
+    try { await api('PUT',`/api/log/${entry.id}`, f); onClose(); onDone(); }
+    catch(e){ onErr(e.message); }
+  };
+  return <Modal title="Edit transaction" onClose={onClose}>
+    <Field label="Card number"><input className="fld" value={f.card_number} onChange={up('card_number')} /></Field>
+    <Field label="Staff name"><StaffSelect value={f.staff_name} onChange={v=>setF({...f, staff_name:v})} /></Field>
+    <Field label="Reason"><input className="fld" value={f.reason} onChange={up('reason')} /></Field>
+    <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:8 }}>
+      <Btn color={C.gray} onClick={onClose}>Cancel</Btn>
+      <Btn onClick={submit}>Save</Btn>
+    </div>
+  </Modal>;
+}
+
+// ═══ DATA ISSUES (roster quality report) ═══════
+function DataIssues() {
+  const [data, setData] = useState({ data:[], totals:{} });
+  const [sev, setSev] = useState('');
+  const [alert, setAlert] = useState(null);
+  const load = useCallback(async () => {
+    const url = '/api/data-issues' + (sev?`?severity=${sev}`:'');
+    try { setData(await api('GET', url)); } catch(e){ setAlert({type:'error',msg:e.message}); }
+  }, [sev]);
+  useEffect(()=>{ load(); }, [load]);
+
+  const t = data.totals || {};
+  const sevColor = s => s==='error'?C.red : s==='warn'?C.orange : C.gray;
+  const sevLabel = s => s==='error'?'Error' : s==='warn'?'Warning' : 'Info';
+
+  const resolve = async (id) => {
+    try { await api('PUT',`/api/data-issues/${id}/resolve`); load(); }
+    catch(e){ setAlert({type:'error',msg:e.message}); }
+  };
+
+  return <div>
+    <h2 style={{ margin:'0 0 6px', fontSize:22, fontWeight:700 }}>Data Issues</h2>
+    <div style={{ fontSize:13, color:C.gray, marginBottom:16 }}>
+      Problems found in the roster during import. The system reads the sheet only — fix these at the source (the Google Sheet), then re-sync.
+    </div>
+    {alert && <Banner {...alert} onClose={()=>setAlert(null)} />}
+
+    <div style={{ display:'flex', gap:12, marginBottom:16, flexWrap:'wrap' }}>
+      <Stat label="Total open" value={t.total||0} />
+      <Stat label="Errors" value={t.errors||0} color={t.errors?C.red:C.gray} sub="must fix — affects accuracy" />
+      <Stat label="Warnings" value={t.warnings||0} color={t.warnings?C.orange:C.gray} sub="missing / unclear data" />
+      <Stat label="Info" value={t.info||0} color={C.gray} sub="borrows, notes" />
+    </div>
+
+    <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
+      {['','error','warn','info'].map(s => (
+        <button key={s||'all'} onClick={()=>setSev(s)} style={{
+          background: sev===s ? (s?sevColor(s):C.dark) : C.white, color: sev===s?'#fff':C.dark,
+          border:`1px solid ${C.border}`, borderRadius:20, padding:'6px 14px', fontSize:12,
+          fontWeight:700, cursor:'pointer' }}>{s?sevLabel(s)+'s':'All'}</button>
+      ))}
+    </div>
+
+    {data.data.length===0 ? <Empty text="No open data issues. Run a roster import to populate this report." /> :
+      <Table head={['Severity','Type','Group','Guest','Value in sheet','What is wrong','Action']}
+        rows={data.data.map(r => ({ key:r.id, hl:r.severity==='error', cells:[
+          <Tag color={sevColor(r.severity)}>{sevLabel(r.severity)}</Tag>,
+          <span style={{ fontSize:12, color:C.gray }}>{r.issue_type}</span>,
+          <span style={{ color:C.gray }}>{r.sheet_name||'—'}</span>,
+          <span style={{ fontWeight:600 }}>{r.guest_name||'—'}</span>,
+          <code style={{ fontSize:12, background:C.bgLight, padding:'1px 5px', borderRadius:3 }}>{r.raw_value ?? '—'}</code>,
+          <span>{r.message}{r.suggestion && <span style={{ color:C.blue }}> — {r.suggestion}</span>}</span>,
+          <Btn sm color={C.gray} onClick={()=>resolve(r.id)}>Resolve</Btn>,
+        ]}))} />}
+  </div>;
+}
+
+// ═══ HOW TO USE ════════════════════════════════
+function HowToUse() {
+  const items = [
+    ['Start of shift','Open Home and check Cards Out, At Desk, and missing-card warnings.'],
+    ['Find a guest','Go to Issue / Return, choose the group, then search by name or room.'],
+    ['Issue a card','Click + Issue, choose an available card, choose staff name, enter a reason if needed, then confirm.'],
+    ['Borrow a card','If the group has no cards left, pick a card under "Borrow from another group". The log records the original owner.'],
+    ['Return a card','Click Return, choose the card if the guest has more than one, choose staff, then confirm.'],
+    ['Check loose cards','Open Cards Out to see every card currently with a guest, who has it, and who issued it.'],
+    ['Check inventory','Open Card Inventory for totals, cards at the desk, cards out, and missing cards per group.'],
+    ['Mark missing','In Card Inventory use the Missing button when a card cannot be located. Unmark when found.'],
+    ['3-card limit','A guest can hold at most 3 cards. The app blocks a 4th until one is returned.'],
+    ['Sync roster (next phase)','Home > Sync Google/Excel Roster will pull names and rooms from the master spreadsheet. Card activity stays in the app.'],
+  ];
+  return <div>
+    <h2 style={{ margin:'0 0 16px', fontSize:22, fontWeight:700 }}>How To Use</h2>
+    <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:8, padding:18, marginBottom:16 }}>
+      <div style={{ fontWeight:700, marginBottom:6 }}>Daily workflow</div>
+      <div style={{ fontSize:13, color:C.gray }}>Use this app as the single source of truth for temp cards, instead of juggling multiple Google Sheets.</div>
+    </div>
+    <div style={{ display:'grid', gap:10 }}>
+      {items.map(([t,b]) => <div key={t} style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:8, padding:'14px 16px' }}>
+        <div style={{ fontWeight:700, fontSize:14 }}>{t}</div>
+        <div style={{ fontSize:13, color:C.gray, marginTop:4 }}>{b}</div>
+      </div>)}
+    </div>
+  </div>;
+}
+
+// ─── shared table + empty ──────────────────────
+function Table({ head, rows }) {
+  return <div style={{ overflowX:'auto', background:C.white, border:`1px solid ${C.border}`, borderRadius:8 }}>
+    <table style={{ width:'100%', fontSize:13 }}>
+      <thead><tr style={{ background:C.bgLight }}>
+        {head.map(h => <th key={h} style={{ padding:'10px 12px', textAlign:'left', fontWeight:700,
+          borderBottom:`2px solid ${C.border}`, whiteSpace:'nowrap', fontSize:11, color:C.gray }}>{h}</th>)}
+      </tr></thead>
+      <tbody>
+        {rows.map((r,i) => <tr key={r.key} style={{ borderBottom:`1px solid ${C.border}`,
+          background: r.hl ? '#fff3cd' : i%2 ? C.bgLight : C.white }}>
+          {r.cells.map((c,j) => <td key={j} style={{ padding:'10px 12px', verticalAlign:'middle' }}>{c}</td>)}
+        </tr>)}
+      </tbody>
+    </table>
+  </div>;
+}
+function Empty({ text }) {
+  return <div style={{ background:C.white, border:`1px solid ${C.border}`, borderRadius:8,
+    padding:30, textAlign:'center', color:C.gray }}>{text}</div>;
+}
+
+// ═══ APP SHELL ═════════════════════════════════
+function App() {
+  const [page, setPage] = useState('dashboard');
+  const [initConfId, setInitConfId] = useState(null);
+  const [conferences, setConferences] = useState([]);
+
+  const loadConferences = useCallback(async () => {
+    try { setConferences((await api('GET','/api/conferences')).data); } catch {}
+  }, []);
+  useEffect(()=>{ loadConferences(); }, [loadConferences]);
+
+  const navigate = (pg, confId=null) => { setInitConfId(confId); setPage(pg); };
+
+  const TABS = [
+    ['dashboard','🏠 Home'], ['cards-out','📤 Cards Out'], ['tracker','↔️ Issue / Return'],
+    ['inventory','🗂️ Card Inventory'], ['log','📋 Log'], ['issues','⚠️ Data Issues'], ['help','How To Use'],
+  ];
+
+  return <div style={{ minHeight:'100vh' }}>
+    <div style={{ background:C.dark, padding:'0 20px' }}>
+      <div style={{ maxWidth:1100, margin:'0 auto', display:'flex', alignItems:'center', gap:4, overflowX:'auto' }}>
+        <div style={{ color:'#fff', fontWeight:800, fontSize:16, padding:'14px 16px 14px 0', whiteSpace:'nowrap', marginRight:8 }}>🔑 Temp Card Tracker</div>
+        {TABS.map(([id,label]) => <button key={id} onClick={()=>navigate(id)} style={{
+          background: page===id ? C.blue : 'transparent', color:'#fff', border:'none', padding:'14px',
+          cursor:'pointer', fontWeight: page===id?700:400, fontSize:13, whiteSpace:'nowrap',
+          borderBottom: page===id ? '3px solid #fff' : '3px solid transparent' }}>{label}</button>)}
+      </div>
+    </div>
+    <div style={{ maxWidth:1100, margin:'0 auto', padding:'24px 16px' }}>
+      {page==='dashboard' && <Dashboard conferences={conferences} onNavigate={navigate} />}
+      {page==='cards-out' && <CardsOut conferences={conferences} />}
+      {page==='tracker' && <Tracker conferences={conferences} initConfId={initConfId} reloadConferences={loadConferences} />}
+      {page==='inventory' && <Inventory conferences={conferences} initConfId={initConfId} />}
+      {page==='log' && <Log conferences={conferences} />}
+      {page==='issues' && <DataIssues />}
+      {page==='help' && <HowToUse />}
+    </div>
+  </div>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "name": "temp-card-tracker",
+  "version": "2.0.0",
+  "description": "Temp Room Access Key-Card Tracker — Express + built-in SQLite (no native deps)",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node --experimental-sqlite server.js",
+    "seed": "node --experimental-sqlite seed.js",
+    "reset": "node --experimental-sqlite seed.js --reset",
+    "import": "node --experimental-sqlite import/import.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "xlsx": "^0.18.5"
+  }
+}

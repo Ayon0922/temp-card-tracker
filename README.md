@@ -10,6 +10,48 @@ and missing-card tracking.
 Node** (`node:sqlite`) + **SheetJS** for reading rosters. No database server, no
 native compilation.
 
+## Screenshots
+
+> All data shown is synthetic (random example guests, placeholder staff).
+
+**Data Issues — the roster quality report.** Because staff type free text into a
+shared spreadsheet, the importer classifies every cell and flags what's wrong
+before it can cause a billing mistake:
+
+![Data Issues report](docs/06-data-issues.png)
+
+| Home dashboard | Issue / Return |
+|---|---|
+| ![Home](docs/01-home.png) | ![Issue / Return](docs/03-issue-return.png) |
+
+| Card Inventory | Transaction Log |
+|---|---|
+| ![Card Inventory](docs/04-inventory.png) | ![Transaction Log](docs/05-log.png) |
+
+## What this demonstrates
+
+- **Full-stack build** — a React single-page UI, an Express REST API, and a
+  normalized relational schema (foreign keys, indexes, a trigger, and
+  transaction-wrapped writes) on SQLite.
+- **Data engineering / ETL** — a one-way pipeline (**extract → classify →
+  validate → load**) that turns a messy multi-tab spreadsheet into clean,
+  queryable data without ever writing back to the source.
+- **Messy-text resolution** — a reference-set classifier that, because every cell
+  is the same type (text), resolves each value by priority: known staff (fuzzy
+  token match) → known card (inventory) → date (many broken formats like
+  `6/19 - 7:17PM`, `unsure`, time-only) → else reason. Junk like `Reslife 00070`
+  or a note pasted into a card cell is detected and flagged, not trusted.
+- **Data quality as a feature** — every anomaly (missing dates, unknown cards,
+  name mismatches, duplicates) becomes a severity-ranked report so errors are
+  fixed at the source before they affect accuracy.
+- **Idempotent sync** — re-running the import preserves edits made in the app
+  (`edited_in_app`), so corrections are never clobbered.
+- **Privacy by design** — synthetic demo data, secrets in a gitignored `.env`,
+  read-only access to the source, and (planned) a fully self-contained build with
+  no external calls for a dataset that can include minors.
+- **Low-friction stack** — Node's built-in SQLite means no database server and no
+  native compilation; the UI needs no build step.
+
 ## Requirements
 
 - **Node.js ≥ 22.5** (`node --version`).
